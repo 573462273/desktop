@@ -16,19 +16,21 @@ public:
     explicit ServerNotificationHandler(AccountState *accountState, QObject *parent = nullptr);
 
 signals:
-    void newNotificationList(ActivityList);
+    void newNotificationList(OCC::ActivityList);
+    void newIncomingCallsList(OCC::ActivityList);
+    void jobFinished();
 
-public slots:
-    void slotFetchNotifications();
+public:
+    bool startFetchNotifications();
 
 private slots:
     void slotNotificationsReceived(const QJsonDocument &json, int statusCode);
     void slotEtagResponseHeaderReceived(const QByteArray &value, int statusCode);
-    void slotAllowDesktopNotificationsChanged(bool isAllowed);
 
 private:
     QPointer<JsonApiJob> _notificationJob;
     AccountState *_accountState;
+    QString _preFetchEtagHeader;
 };
 }
 

@@ -33,12 +33,6 @@
 #include <QJsonObject>
 #include <QJsonValue>
 
-namespace OCC {
-
-Q_LOGGING_CATEGORY(lcBulkPropagatorJob, "nextcloud.sync.propagator.bulkupload", QtInfoMsg)
-
-}
-
 namespace {
 
 QByteArray getEtagFromJsonReply(const QJsonObject &reply)
@@ -65,14 +59,15 @@ QByteArray getHeaderFromJsonReply(const QJsonObject &reply, const QByteArray &he
 }
 
 constexpr auto batchSize = 100;
-
 constexpr auto parallelJobsMaximumCount = 1;
+
 }
 
 namespace OCC {
 
-BulkPropagatorJob::BulkPropagatorJob(OwncloudPropagator *propagator,
-                                     const std::deque<SyncFileItemPtr> &items)
+Q_LOGGING_CATEGORY(lcBulkPropagatorJob, "nextcloud.sync.propagator.bulkupload", QtInfoMsg)
+
+BulkPropagatorJob::BulkPropagatorJob(OwncloudPropagator *propagator, const std::deque<SyncFileItemPtr> &items)
     : PropagatorJob(propagator)
     , _items(items)
 {
@@ -82,23 +77,29 @@ BulkPropagatorJob::BulkPropagatorJob(OwncloudPropagator *propagator,
 
 bool BulkPropagatorJob::scheduleSelfOrChild()
 {
-    if (_items.empty()) {
-        return false;
-    }
-    if (!_pendingChecksumFiles.empty()) {
+    if (_items.empty() || !_pendingChecksumFiles.empty()) {
         return false;
     }
 
     _state = Running;
-    for(int i = 0; i < batchSize && !_items.empty(); ++i) {
-        auto currentItem = _items.front();
+
+    for(auto i = 0; i < batchSize && !_items.empty(); ++i) {
+        const auto currentItem = _items.front();
         _items.pop_front();
         _pendingChecksumFiles.insert(currentItem->_file);
-        QMetaObject::invokeMethod(this, [this, currentItem] () {
+
+        QMetaObject::invokeMethod(this, [this, currentItem] {
             UploadFileInfo fileToUpload;
             fileToUpload._file = currentItem->_file;
             fileToUpload._size = currentItem->_size;
             fileToUpload._path = propagator()->fullLocalPath(fileToUpload._file);
+
+            qCDebug(lcBulkPropagatorJob) << "Scheduling bulk propagator job:" << this
+                                         << "and starting upload of item"
+                                         << "with file:" << fileToUpload._file
+                                         << "with size:" << fileToUpload._size
+                                         << "with path:" << fileToUpload._path;
+
             startUploadFile(currentItem, fileToUpload);
         }); // We could be in a different thread (neon jobs)
     }
@@ -106,7 +107,7 @@ bool BulkPropagatorJob::scheduleSelfOrChild()
     return _items.empty() && _filesToUpload.empty();
 }
 
-PropagatorJob::JobParallelism BulkPropagatorJob::parallelism()
+PropagatorJob::JobParallelism BulkPropagatorJob::parallelism() const
 {
     return PropagatorJob::JobParallelism::FullParallelism;
 }
@@ -119,7 +120,7 @@ void BulkPropagatorJob::startUploadFile(SyncFileItemPtr item, UploadFileInfo fil
 
     // Check if the specific file can be accessed
     if (propagator()->hasCaseClashAccessibilityProblem(fileToUpload._file)) {
-        done(item, SyncFileItem::NormalError, tr("File %1 cannot be uploaded because another file with the same name, differing only in case, exists").arg(QDir::toNativeSeparators(item->_file)));
+        done(item, SyncFileItem::NormalError, tr("File %1 cannot be uploaded because another file with the same name, differing only in case, exists").arg(QDir::toNativeSeparators(item->_file)), ErrorCategory::GenericError);
         return;
     }
 
@@ -139,12 +140,13 @@ void BulkPropagatorJob::doStartUpload(SyncFileItemPtr item,
     // in reconcile (issue #5106)
     SyncJournalDb::UploadInfo pi;
     pi._valid = true;
-    pi._chunk = 0;
+    pi._chunkUploadV1 = 0;
     pi._transferid = 0; // We set a null transfer id because it is not chunked.
     pi._modtime = item->_modtime;
     pi._errorCount = 0;
     pi._contentChecksum = item->_checksumHeader;
     pi._size = item->_size;
+
     propagator()->_journal->setUploadInfo(item->_file, pi);
     propagator()->_journal->commit("Upload info");
 
@@ -156,17 +158,21 @@ void BulkPropagatorJob::doStartUpload(SyncFileItemPtr item,
         const auto originalFilePathAbsolute = propagator()->fullLocalPath(item->_file);
         const auto newFilePathAbsolute = propagator()->fullLocalPath(item->_renameTarget);
         const auto renameSuccess = QFile::rename(originalFilePathAbsolute, newFilePathAbsolute);
+
         if (!renameSuccess) {
-            done(item, SyncFileItem::NormalError, "File contains trailing spaces and couldn't be renamed");
+            done(item, SyncFileItem::NormalError, "File contains trailing spaces and couldn't be renamed", ErrorCategory::GenericError);
             return;
         }
+
         qCWarning(lcBulkPropagatorJob()) << item->_file << item->_renameTarget;
+
         fileToUpload._file = item->_file = item->_renameTarget;
         fileToUpload._path = propagator()->fullLocalPath(fileToUpload._file);
+
         item->_modtime = FileSystem::getModTime(newFilePathAbsolute);
         if (item->_modtime <= 0) {
             _pendingChecksumFiles.remove(item->_file);
-            slotOnErrorStartFolderUnlock(item, SyncFileItem::NormalError, tr("File %1 has invalid modified time. Do not upload to the server.").arg(QDir::toNativeSeparators(item->_file)));
+            slotOnErrorStartFolderUnlock(item, SyncFileItem::NormalError, tr("File %1 has invalid modified time. Do not upload to the server.").arg(QDir::toNativeSeparators(item->_file)), ErrorCategory::GenericError);
             checkPropagationIsDone();
             return;
         }
@@ -197,8 +203,11 @@ void BulkPropagatorJob::triggerUpload()
     int timeout = 0;
     for(auto &singleFile : _filesToUpload) {
         // job takes ownership of device via a QScopedPointer. Job deletes itself when finishing
-        auto device = std::make_unique<UploadDevice>(
-                singleFile._localPath, 0, singleFile._fileSize, &propagator()->_bandwidthManager);
+        auto device = std::make_unique<UploadDevice>(singleFile._localPath,
+                                                     0,
+                                                     singleFile._fileSize,
+                                                     &propagator()->_bandwidthManager);
+
         if (!device->open(QIODevice::ReadOnly)) {
             qCWarning(lcBulkPropagatorJob) << "Could not prepare upload device: " << device->errorString();
 
@@ -213,25 +222,26 @@ void BulkPropagatorJob::triggerUpload()
 
             return;
         }
+
         singleFile._headers["X-File-Path"] = singleFile._remotePath.toUtf8();
         uploadParametersData.push_back({std::move(device), singleFile._headers});
         timeout += singleFile._fileSize;
     }
 
     const auto bulkUploadUrl = Utility::concatUrlPath(propagator()->account()->url(), QStringLiteral("/remote.php/dav/bulk"));
-    auto job = std::make_unique<PutMultiFileJob>(propagator()->account(), bulkUploadUrl, std::move(uploadParametersData), this);
-    connect(job.get(), &PutMultiFileJob::finishedSignal, this, &BulkPropagatorJob::slotPutFinished);
+    auto job = new PutMultiFileJob(propagator()->account(), bulkUploadUrl, std::move(uploadParametersData), this);
+    connect(job, &PutMultiFileJob::finishedSignal, this, &BulkPropagatorJob::slotPutFinished);
 
     for(auto &singleFile : _filesToUpload) {
-        connect(job.get(), &PutMultiFileJob::uploadProgress,
-                this, [this, singleFile] (qint64 sent, qint64 total) {
+        connect(job, &PutMultiFileJob::uploadProgress, this, [this, singleFile] (const qint64 sent, const qint64 total) {
             slotUploadProgress(singleFile._item, sent, total);
         });
     }
 
-    adjustLastJobTimeout(job.get(), timeout);
-    _jobs.append(job.get());
-    job.release()->start();
+    adjustLastJobTimeout(job, timeout);
+    _jobs.append(job);
+    job->start();
+
     if (parallelism() == PropagatorJob::JobParallelism::FullParallelism && _jobs.size() < parallelJobsMaximumCount) {
         scheduleSelfOrChild();
     }
@@ -256,25 +266,17 @@ void BulkPropagatorJob::checkPropagationIsDone()
 void BulkPropagatorJob::slotComputeTransmissionChecksum(SyncFileItemPtr item,
                                                         UploadFileInfo fileToUpload)
 {
-    // Reuse the content checksum as the transmission checksum if possible
-    const auto supportedTransmissionChecksums =
-        propagator()->account()->capabilities().supportedChecksumTypes();
-
     // Compute the transmission checksum.
-    auto computeChecksum = std::make_unique<ComputeChecksum>(this);
-    if (uploadChecksumEnabled()) {
-        computeChecksum->setChecksumType("MD5" /*propagator()->account()->capabilities().uploadChecksumType()*/);
-    } else {
-        computeChecksum->setChecksumType(QByteArray());
-    }
+    const auto computeChecksum = new ComputeChecksum(this);
+    const auto checksumType = uploadChecksumEnabled() ? "MD5" : "";
+    computeChecksum->setChecksumType(checksumType);
 
-    connect(computeChecksum.get(), &ComputeChecksum::done,
-            this, [this, item, fileToUpload] (const QByteArray &contentChecksumType, const QByteArray &contentChecksum) {
+    connect(computeChecksum, &ComputeChecksum::done, this, [this, item, fileToUpload] (const QByteArray &contentChecksumType, const QByteArray &contentChecksum) {
         slotStartUpload(item, fileToUpload, contentChecksumType, contentChecksum);
     });
-    connect(computeChecksum.get(), &ComputeChecksum::done,
-            computeChecksum.get(), &QObject::deleteLater);
-    computeChecksum.release()->start(fileToUpload._path);
+    connect(computeChecksum, &ComputeChecksum::done, computeChecksum, &QObject::deleteLater);
+
+    computeChecksum->start(fileToUpload._path);
 }
 
 void BulkPropagatorJob::slotStartUpload(SyncFileItemPtr item,
@@ -286,31 +288,36 @@ void BulkPropagatorJob::slotStartUpload(SyncFileItemPtr item,
 
     item->_checksumHeader = transmissionChecksumHeader;
 
-    const QString fullFilePath = fileToUpload._path;
-    const QString originalFilePath = propagator()->fullLocalPath(item->_file);
+    const auto fullFilePath = fileToUpload._path;
+    const auto originalFilePath = propagator()->fullLocalPath(item->_file);
 
     if (!FileSystem::fileExists(fullFilePath)) {
         _pendingChecksumFiles.remove(item->_file);
-        slotOnErrorStartFolderUnlock(item, SyncFileItem::SoftError, tr("File Removed (start upload) %1").arg(fullFilePath));
+        slotOnErrorStartFolderUnlock(item, SyncFileItem::SoftError, tr("File Removed (start upload) %1").arg(fullFilePath), ErrorCategory::GenericError);
         checkPropagationIsDone();
         return;
     }
-    const time_t prevModtime = item->_modtime; // the _item value was set in PropagateUploadFile::start()
+
+    const auto prevModtime = item->_modtime; // the _item value was set in PropagateUploadFile::start()
     // but a potential checksum calculation could have taken some time during which the file could
     // have been changed again, so better check again here.
 
     item->_modtime = FileSystem::getModTime(originalFilePath);
     if (item->_modtime <= 0) {
         _pendingChecksumFiles.remove(item->_file);
-        slotOnErrorStartFolderUnlock(item, SyncFileItem::NormalError, tr("File %1 has invalid modification time. Do not upload to the server.").arg(QDir::toNativeSeparators(item->_file)));
+        slotOnErrorStartFolderUnlock(item, SyncFileItem::NormalError, tr("File %1 has invalid modification time. Do not upload to the server.").arg(QDir::toNativeSeparators(item->_file)), ErrorCategory::GenericError);
         checkPropagationIsDone();
         return;
     }
     if (prevModtime != item->_modtime) {
         propagator()->_anotherSyncNeeded = true;
         _pendingChecksumFiles.remove(item->_file);
-        qDebug() << "trigger another sync after checking modified time of item" << item->_file << "prevModtime" << prevModtime << "Curr" << item->_modtime;
-        slotOnErrorStartFolderUnlock(item, SyncFileItem::SoftError, tr("Local file changed during syncing. It will be resumed."));
+
+        qCDebug(lcBulkPropagatorJob) << "trigger another sync after checking modified time of item" << item->_file
+                                     << "prevModtime" << prevModtime
+                                     << "Curr" << item->_modtime;
+
+        slotOnErrorStartFolderUnlock(item, SyncFileItem::SoftError, tr("Local file changed during syncing. It will be resumed."), ErrorCategory::GenericError);
         checkPropagationIsDone();
         return;
     }
@@ -324,7 +331,7 @@ void BulkPropagatorJob::slotStartUpload(SyncFileItemPtr item,
     if (fileIsStillChanging(*item)) {
         propagator()->_anotherSyncNeeded = true;
         _pendingChecksumFiles.remove(item->_file);
-        slotOnErrorStartFolderUnlock(item, SyncFileItem::SoftError, tr("Local file changed during sync."));
+        slotOnErrorStartFolderUnlock(item, SyncFileItem::SoftError, tr("Local file changed during sync."), ErrorCategory::GenericError);
         checkPropagationIsDone();
         return;
     }
@@ -333,18 +340,19 @@ void BulkPropagatorJob::slotStartUpload(SyncFileItemPtr item,
 }
 
 void BulkPropagatorJob::slotOnErrorStartFolderUnlock(SyncFileItemPtr item,
-                                                     SyncFileItem::Status status,
-                                                     const QString &errorString)
+                                                     const SyncFileItem::Status status,
+                                                     const QString &errorString,
+                                                     const ErrorCategory errorCategory)
 {
-    qCInfo(lcBulkPropagatorJob()) << status << errorString;
-    done(item, status, errorString);
+    qCInfo(lcBulkPropagatorJob()) << status << errorString << errorCategory;
+    done(item, status, errorString, errorCategory);
 }
 
 void BulkPropagatorJob::slotPutFinishedOneFile(const BulkUploadItem &singleFile,
                                                PutMultiFileJob *job,
                                                const QJsonObject &fileReply)
 {
-    bool finished = false;
+    auto finished = false;
 
     qCInfo(lcBulkPropagatorJob()) << singleFile._item->_file << "file headers" << fileReply;
 
@@ -358,6 +366,9 @@ void BulkPropagatorJob::slotPutFinishedOneFile(const BulkUploadItem &singleFile,
     singleFile._item->_requestId = job->requestId();
     if (singleFile._item->_httpErrorCode != 200) {
         commonErrorHandling(singleFile._item, fileReply[QStringLiteral("message")].toString());
+        const auto exceptionParsed = getExceptionFromReply(job->reply());
+        singleFile._item->_errorExceptionName = exceptionParsed.first;
+        singleFile._item->_errorExceptionMessage = exceptionParsed.second;
         return;
     }
 
@@ -390,7 +401,17 @@ void BulkPropagatorJob::slotPutFinishedOneFile(const BulkUploadItem &singleFile,
     // the file id should only be empty for new files up- or downloaded
     computeFileId(singleFile._item, fileReply);
 
+    if (SyncJournalFileRecord oldRecord; propagator()->_journal->getFileRecord(singleFile._item->destination(), &oldRecord) && oldRecord.isValid()) {
+        if (oldRecord._etag != singleFile._item->_etag) {
+            singleFile._item->updateLockStateFromDbRecord(oldRecord);
+        }
+    }
+
     singleFile._item->_etag = etag;
+    singleFile._item->_fileId = getHeaderFromJsonReply(fileReply, "fileid");
+    singleFile._item->_remotePerm = RemotePermissions::fromServerString(getHeaderFromJsonReply(fileReply, "permissions"));
+    singleFile._item->_isShared = singleFile._item->_remotePerm.hasPermission(RemotePermissions::IsShared) || singleFile._item->_sharedByMe;
+    singleFile._item->_lastShareStateFetchedTimestamp = QDateTime::currentMSecsSinceEpoch();
 
     if (getHeaderFromJsonReply(fileReply, "X-OC-MTime") != "accepted") {
         // X-OC-MTime is supported since owncloud 5.0.   But not when chunking.
@@ -402,10 +423,12 @@ void BulkPropagatorJob::slotPutFinishedOneFile(const BulkUploadItem &singleFile,
 
 void BulkPropagatorJob::slotPutFinished()
 {
-    auto *job = qobject_cast<PutMultiFileJob *>(sender());
+    const auto job = qobject_cast<PutMultiFileJob *>(sender());
     Q_ASSERT(job);
 
     slotJobDestroyed(job); // remove it from the _jobs list
+
+    const auto jobError = job->reply()->error();
 
     const auto replyData = job->reply()->readAll();
     const auto replyJson = QJsonDocument::fromJson(replyData);
@@ -413,6 +436,10 @@ void BulkPropagatorJob::slotPutFinished()
 
     for (const auto &singleFile : _filesToUpload) {
         if (!fullReplyObject.contains(singleFile._remotePath)) {
+            if (jobError != QNetworkReply::NoError) {
+                singleFile._item->_status = SyncFileItem::NormalError;
+                abortWithError(singleFile._item, SyncFileItem::NormalError, tr("Network error: %1").arg(jobError));
+            }
             continue;
         }
         const auto singleReplyObject = fullReplyObject[singleFile._remotePath].toObject();
@@ -428,10 +455,11 @@ void BulkPropagatorJob::slotUploadProgress(SyncFileItemPtr item, qint64 sent, qi
     // resetting progress due to the sent being zero by ignoring it.
     // finishedSignal() is bound to be emitted soon anyway.
     // See https://bugreports.qt.io/browse/QTBUG-44782.
+    _sentTotal += sent;
     if (sent == 0 && total == 0) {
         return;
     }
-    propagator()->reportProgress(*item, sent - total);
+    propagator()->reportProgress(*item, _sentTotal);
 }
 
 void BulkPropagatorJob::slotJobDestroyed(QObject *job)
@@ -442,24 +470,24 @@ void BulkPropagatorJob::slotJobDestroyed(QObject *job)
 void BulkPropagatorJob::adjustLastJobTimeout(AbstractNetworkJob *job, qint64 fileSize) const
 {
     constexpr double threeMinutes = 3.0 * 60 * 1000;
+    const auto timeBound = qBound(job->timeoutMsec(),
+                                  // Calculate 3 minutes for each gigabyte of data
+                                  qRound64(threeMinutes * static_cast<double>(fileSize) / 1e9),
+                                  // Maximum of 30 minutes
+                                  static_cast<qint64>(30 * 60 * 1000));
 
-    job->setTimeout(qBound(
-        job->timeoutMsec(),
-        // Calculate 3 minutes for each gigabyte of data
-        qRound64(threeMinutes * static_cast<double>(fileSize) / 1e9),
-        // Maximum of 30 minutes
-                        static_cast<qint64>(30 * 60 * 1000)));
+    job->setTimeout(timeBound);
 }
 
 void BulkPropagatorJob::finalizeOneFile(const BulkUploadItem &oneFile)
 {
     // Update the database entry
-    const auto result = propagator()->updateMetadata(*oneFile._item);
+    const auto result = propagator()->updateMetadata(*oneFile._item, Vfs::UpdateMetadataType::DatabaseMetadata);
     if (!result) {
-        done(oneFile._item, SyncFileItem::FatalError, tr("Error updating metadata: %1").arg(result.error()));
+        done(oneFile._item, SyncFileItem::FatalError, tr("Error updating metadata: %1").arg(result.error()), ErrorCategory::GenericError);
         return;
     } else if (*result == Vfs::ConvertToPlaceholderResult::Locked) {
-        done(oneFile._item, SyncFileItem::SoftError, tr("The file %1 is currently in use").arg(oneFile._item->_file));
+        done(oneFile._item, SyncFileItem::SoftError, tr("The file %1 is currently in use").arg(oneFile._item->_file), ErrorCategory::GenericError);
         return;
     }
 
@@ -481,6 +509,8 @@ void BulkPropagatorJob::finalizeOneFile(const BulkUploadItem &oneFile)
 
 void BulkPropagatorJob::finalize(const QJsonObject &fullReply)
 {
+    qCDebug(lcBulkPropagatorJob) << "Received a full reply" << fullReply;
+
     for(auto singleFileIt = std::begin(_filesToUpload); singleFileIt != std::end(_filesToUpload); ) {
         const auto &singleFile = *singleFileIt;
 
@@ -490,9 +520,10 @@ void BulkPropagatorJob::finalize(const QJsonObject &fullReply)
         }
         if (!singleFile._item->hasErrorStatus()) {
             finalizeOneFile(singleFile);
+            singleFile._item->_status = OCC::SyncFileItem::Success;
         }
 
-        done(singleFile._item, singleFile._item->_status, {});
+        done(singleFile._item, singleFile._item->_status, {}, ErrorCategory::GenericError);
 
         singleFileIt = _filesToUpload.erase(singleFileIt);
     }
@@ -501,13 +532,18 @@ void BulkPropagatorJob::finalize(const QJsonObject &fullReply)
 }
 
 void BulkPropagatorJob::done(SyncFileItemPtr item,
-                             SyncFileItem::Status status,
-                             const QString &errorString)
+                             const SyncFileItem::Status status,
+                             const QString &errorString,
+                             const ErrorCategory category)
 {
     item->_status = status;
     item->_errorString = errorString;
 
-    qCInfo(lcBulkPropagatorJob) << "Item completed" << item->destination() << item->_status << item->_instruction << item->_errorString;
+    qCInfo(lcBulkPropagatorJob) << "Item completed"
+                                << item->destination()
+                                << item->_status
+                                << item->_instruction
+                                << item->_errorString;
 
     handleFileRestoration(item, errorString);
 
@@ -525,7 +561,7 @@ void BulkPropagatorJob::done(SyncFileItemPtr item,
 
     handleJobDoneErrors(item, status);
 
-    emit propagator()->itemCompleted(item);
+    emit propagator()->itemCompleted(item, category);
 }
 
 QMap<QByteArray, QByteArray> BulkPropagatorJob::headers(SyncFileItemPtr item) const
@@ -533,6 +569,7 @@ QMap<QByteArray, QByteArray> BulkPropagatorJob::headers(SyncFileItemPtr item) co
     QMap<QByteArray, QByteArray> headers;
     headers[QByteArrayLiteral("Content-Type")] = QByteArrayLiteral("application/octet-stream");
     headers[QByteArrayLiteral("X-File-Mtime")] = QByteArray::number(qint64(item->_modtime));
+
     if (qEnvironmentVariableIntValue("OWNCLOUD_LAZYOPS")) {
         headers[QByteArrayLiteral("OC-LazyOps")] = QByteArrayLiteral("true");
     }
@@ -582,23 +619,24 @@ void BulkPropagatorJob::abortWithError(SyncFileItemPtr item,
                                        const QString &error)
 {
     abort(AbortType::Synchronous);
-    done(item, status, error);
+    done(item, status, error, ErrorCategory::GenericError);
 }
 
 void BulkPropagatorJob::checkResettingErrors(SyncFileItemPtr item) const
 {
     if (item->_httpErrorCode == 412
         || propagator()->account()->capabilities().httpErrorCodesThatResetFailingChunkedUploads().contains(item->_httpErrorCode)) {
+
         auto uploadInfo = propagator()->_journal->getUploadInfo(item->_file);
         uploadInfo._errorCount += 1;
         if (uploadInfo._errorCount > 3) {
             qCInfo(lcBulkPropagatorJob) << "Reset transfer of" << item->_file
-                                      << "due to repeated error" << item->_httpErrorCode;
+                                        << "due to repeated error" << item->_httpErrorCode;
             uploadInfo = SyncJournalDb::UploadInfo();
         } else {
             qCInfo(lcBulkPropagatorJob) << "Error count for maybe-reset error" << item->_httpErrorCode
-                                      << "on file" << item->_file
-                                      << "is" << uploadInfo._errorCount;
+                                        << "on file" << item->_file
+                                        << "is" << uploadInfo._errorCount;
         }
         propagator()->_journal->setUploadInfo(item->_file, uploadInfo);
         propagator()->_journal->commit("Upload info");
@@ -610,7 +648,6 @@ void BulkPropagatorJob::commonErrorHandling(SyncFileItemPtr item,
 {
     // Ensure errors that should eventually reset the chunked upload are tracked.
     checkResettingErrors(item);
-
     abortWithError(item, SyncFileItem::NormalError, errorMessage);
 }
 
@@ -636,6 +673,7 @@ bool BulkPropagatorJob::checkFileChanged(SyncFileItemPtr item,
 {
     if (!FileSystem::verifyFileUnchanged(fullFilePath, item->_size, item->_modtime)) {
         propagator()->_anotherSyncNeeded = true;
+
         if (!finished) {
             abortWithError(item, SyncFileItem::SoftError, tr("Local file changed during sync."));
             // FIXME:  the legacy code was retrying for a few seconds.
@@ -667,12 +705,10 @@ void BulkPropagatorJob::handleFileRestoration(SyncFileItemPtr item,
             || item->_status == SyncFileItem::Conflict) {
             item->_status = SyncFileItem::Restoration;
         } else {
-            item->_errorString += tr("; Restoration Failed: %1").arg(errorString);
+            item->_errorString += tr("Restoration failed: %1").arg(errorString);
         }
-    } else {
-        if (item->_errorString.isEmpty()) {
-            item->_errorString = errorString;
-        }
+    } else if (item->_errorString.isEmpty()) {
+        item->_errorString = errorString;
     }
 }
 
@@ -685,9 +721,14 @@ void BulkPropagatorJob::handleJobDoneErrors(SyncFileItemPtr item,
                                             SyncFileItem::Status status)
 {
     if (item->hasErrorStatus()) {
-        qCWarning(lcPropagator) << "Could not complete propagation of" << item->destination() << "by" << this << "with status" << item->_status << "and error:" << item->_errorString;
+        qCWarning(lcPropagator) << "Could not complete propagation of" << item->destination()
+                                << "by" << this
+                                << "with status" << item->_status
+                                << "and error:" << item->_errorString;
     } else {
-        qCInfo(lcPropagator) << "Completed propagation of" << item->destination() << "by" << this << "with status" << item->_status;
+        qCInfo(lcPropagator) << "Completed propagation of" << item->destination()
+                             << "by" << this
+                             << "with status" << item->_status;
     }
 
     if (item->_status == SyncFileItem::FatalError) {
@@ -703,6 +744,8 @@ void BulkPropagatorJob::handleJobDoneErrors(SyncFileItemPtr item,
     case SyncFileItem::FileIgnored:
     case SyncFileItem::FileLocked:
     case SyncFileItem::FileNameInvalid:
+    case SyncFileItem::FileNameInvalidOnServer:
+    case SyncFileItem::FileNameClash:
     case SyncFileItem::NoStatus:
     case SyncFileItem::NormalError:
     case SyncFileItem::Restoration:

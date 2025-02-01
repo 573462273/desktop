@@ -1,84 +1,70 @@
-import QtQml 2.15
-import QtQuick 2.15
-import QtQuick.Controls 2.15
-import QtQuick.Layouts 1.15
-import Style 1.0
-import com.nextcloud.desktopclient 1.0
+import QtQml
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Style
+import com.nextcloud.desktopclient
 
-MouseArea {
+ItemDelegate {
     id: root
 
     property Flickable flickable
 
+    property int iconSize: Style.trayListItemIconSize
+
     property bool isFileActivityList: false
 
-    property bool isChatActivity: model.objectType === "chat" || model.objectType === "room"
+    readonly property bool isChatActivity: model.objectType === "chat" || model.objectType === "room" || model.objectType === "call"
+    readonly property bool isTalkReplyPossible: model.conversationToken !== ""
+    property bool isTalkReplyOptionVisible: model.messageSent !== ""
 
-    signal fileActivityButtonClicked(string absolutePath)
-
-    enabled: (model.path !== "" || model.link !== "" || model.isCurrentUserFileActivity === true)
-    hoverEnabled: true
-
-    height: childrenRect.height
-
-    ToolTip.visible: containsMouse && !activityContent.childHovered && model.displayLocation !== ""
-    ToolTip.delay: Qt.styleHints.mousePressAndHoldInterval
-    ToolTip.text: qsTr("In %1").arg(model.displayLocation)
+    padding: Style.standardSpacing
 
     Accessible.role: Accessible.ListItem
     Accessible.name: (model.path !== "" && model.displayPath !== "") ? qsTr("Open %1 locally").arg(model.displayPath) : model.message
     Accessible.onPressAction: root.clicked()
 
-    Rectangle {
-        id: activityHover
-        anchors.fill: parent
-        color: (parent.containsMouse ? Style.lightHover : "transparent")
+    ToolTip {
+        visible: root.hovered && !activityContent.childHovered && model.displayLocation !== ""
+        text: qsTr("In %1").arg(model.displayLocation)
     }
 
-    ColumnLayout {
-        anchors.left: root.left
-        anchors.right: root.right
-        anchors.leftMargin: 15
-        anchors.rightMargin: 10
-
-        spacing: 0
+    // TODO: the current style does not support customization of this control
+    contentItem: ColumnLayout {
+        spacing: Style.smallSpacing
 
         ActivityItemContent {
             id: activityContent
 
             Layout.fillWidth: true
+            Layout.minimumHeight: Style.minActivityHeight
+            Layout.preferredWidth: parent.width
 
-            showDismissButton: model.links.length > 0 && model.linksForActionButtons.length === 0
+            showDismissButton: model.isDismissable
+
+            iconSize: root.iconSize
 
             activityData: model
+            activity: model.activity
 
-            Layout.preferredHeight: Style.trayWindowHeaderHeight
-
-            onShareButtonClicked: Systray.openShareDialog(model.displayPath, model.absolutePath)
-            onDismissButtonClicked: activityModel.slotTriggerDismiss(model.index)
+            onDismissButtonClicked: activityModel.slotTriggerDismiss(model.activityIndex)
         }
 
-        ActivityItemActions {
-            id: activityActions
+        Loader {
+            id: talkReplyTextFieldLoader
+            active: root.isChatActivity && root.isTalkReplyPossible && model.messageSent === ""
+            visible: root.isTalkReplyOptionVisible
 
-            visible: !root.isFileActivityList && model.linksForActionButtons.length > 0
+            Layout.preferredWidth: Style.talkReplyTextFieldPreferredWidth
+            Layout.preferredHeight: Style.talkReplyTextFieldPreferredHeight
+            Layout.leftMargin: Style.trayListItemIconSize + Style.trayHorizontalMargin
 
-            Layout.preferredHeight: Style.trayWindowHeaderHeight * 0.85
-            Layout.fillWidth: true
-            Layout.leftMargin: 40
-            Layout.bottomMargin: model.links.length > 1 ? 5 : 0
-
-            displayActions: model.displayActions
-            objectType: model.objectType
-            linksForActionButtons: model.linksForActionButtons
-            linksContextMenu: model.linksContextMenu
-
-            moreActionsButtonColor: activityHover.color
-            maxActionButtons: activityModel.maxActionButtons
-
-            flickable: root.flickable
-
-            onTriggerAction: activityModel.slotTriggerAction(model.index, actionIndex)
+            sourceComponent: TalkReplyTextField {
+                onSendReply: {
+                    UserModel.currentUser.sendReplyMessage(model.activityIndex, model.conversationToken, reply, model.messageId);
+                    talkReplyTextFieldLoader.visible = false;
+                }
+            }
         }
     }
 }

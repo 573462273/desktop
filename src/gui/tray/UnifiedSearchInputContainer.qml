@@ -1,93 +1,104 @@
-import QtQml 2.15
-import QtQuick 2.15
-import QtQuick.Controls 2.3
-import QtGraphicalEffects 1.0
-import Style 1.0
+/*
+ * Copyright (C) 2021 by Oleksandr Zolotov <alex@nextcloud.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
+ * for more details.
+ */
+
+import QtQml
+import QtQuick
+import QtQuick.Controls
+import Qt5Compat.GraphicalEffects
+import Style
+
+import com.nextcloud.desktopclient
 
 TextField {
-    id: trayWindowUnifiedSearchTextField
-
-    property bool isSearchInProgress: false
-
-    readonly property color textFieldIconsColor: Style.menuBorder
-
-    readonly property int textFieldIconsOffset: 10
-
-    readonly property double textFieldIconsScaleFactor: 0.6
-
-    readonly property int textFieldHorizontalPaddingOffset: 14
+    id: root
 
     signal clearText()
 
-    leftPadding: trayWindowUnifiedSearchTextFieldSearchIcon.width + trayWindowUnifiedSearchTextFieldSearchIcon.anchors.leftMargin + textFieldHorizontalPaddingOffset
-    rightPadding: trayWindowUnifiedSearchTextFieldClearTextButton.width + trayWindowUnifiedSearchTextFieldClearTextButton.anchors.rightMargin + textFieldHorizontalPaddingOffset
+    property bool isSearchInProgress: false
+
+    readonly property color textFieldIconsColor: palette.placeholderText
+
+    readonly property int iconInset: Style.smallSpacing
+
+    topPadding: topInset
+    bottomPadding: bottomInset
+    leftPadding: searchIconImage.width + searchIconImage.x + Style.smallSpacing
+    rightPadding: (width - clearTextButton.x) + Style.smallSpacing
+    verticalAlignment: Qt.AlignVCenter
 
     placeholderText: qsTr("Search files, messages, events …")
 
     selectByMouse: true
 
-    background: Rectangle {
-        radius: 5
-        border.color: parent.activeFocus ? Style.ncBlue : Style.menuBorder
-        border.width: 1
-    }
-
     Image {
-        id: trayWindowUnifiedSearchTextFieldSearchIcon
+        id: searchIconImage
 
         anchors {
-            left: parent.left
-            leftMargin: parent.textFieldIconsOffset
-            verticalCenter: parent.verticalCenter
+            left: root.left
+            leftMargin: iconInset
+            top: root.top
+            topMargin: Style.extraSmallSpacing
+            bottom: root.bottom
+            bottomMargin: Style.extraSmallSpacing 
         }
 
-        visible: !trayWindowUnifiedSearchTextField.isSearchInProgress
-
-        smooth: true;
+        fillMode: Image.PreserveAspectFit
+        smooth: true
         antialiasing: true
         mipmap: true
-        source: "image://svgimage-custom-color/search.svg" + "/" + trayWindowUnifiedSearchTextField.textFieldIconsColor
-        sourceSize: Qt.size(parent.height * parent.textFieldIconsScaleFactor, parent.height * parent.textFieldIconsScaleFactor)
+        source: "image://svgimage-custom-color/search.svg" + "/" + root.textFieldIconsColor
+        visible: !root.isSearchInProgress
     }
 
-    BusyIndicator {
-        id: trayWindowUnifiedSearchTextFieldIconInProgress
-        running: visible
-        visible: trayWindowUnifiedSearchTextField.isSearchInProgress
+    NCBusyIndicator {
+        id: busyIndicator
+
         anchors {
-            left: trayWindowUnifiedSearchTextField.left
-            bottom: trayWindowUnifiedSearchTextField.bottom
-            leftMargin: trayWindowUnifiedSearchTextField.textFieldIconsOffset - 4
-            topMargin: 4
-            bottomMargin: 4
-            verticalCenter: trayWindowUnifiedSearchTextField.verticalCenter
+            top: root.top
+            topMargin: Style.extraSmallSpacing
+            bottom: root.bottom
+            bottomMargin: Style.extraSmallSpacing
+            left: root.left
+            leftMargin: iconInset
         }
+
         width: height
+        color: root.textFieldIconsColor
+        visible: root.isSearchInProgress
+        running: visible
     }
 
     Image {
-        id: trayWindowUnifiedSearchTextFieldClearTextButton
+        id: clearTextButton
 
         anchors {
-            right: parent.right
-            rightMargin: parent.textFieldIconsOffset
-            verticalCenter: parent.verticalCenter
+            top: root.top
+            topMargin: Style.extraSmallSpacing
+            bottom: root.bottom
+            bottomMargin: Style.extraSmallSpacing
+            right: root.right
+            rightMargin: iconInset
         }
 
-        smooth: true;
-        antialiasing: true
-        mipmap: true
-
-        visible: parent.text
-        source: "image://svgimage-custom-color/clear.svg" + "/" + trayWindowUnifiedSearchTextField.textFieldIconsColor
-        sourceSize: Qt.size(parent.height * parent.textFieldIconsScaleFactor, parent.height * parent.textFieldIconsScaleFactor)
+        fillMode: Image.PreserveAspectFit
+        visible: root.text
+        source: "image://svgimage-custom-color/clear.svg" + "/" + root.textFieldIconsColor
 
         MouseArea {
-            id: trayWindowUnifiedSearchTextFieldClearTextButtonMouseArea
-
+            id: clearTextButtonMouseArea
             anchors.fill: parent
-
-            onClicked: trayWindowUnifiedSearchTextField.clearText()
+            onClicked: root.clearText()
         }
     }
 }

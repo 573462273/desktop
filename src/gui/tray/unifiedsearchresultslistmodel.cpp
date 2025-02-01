@@ -26,47 +26,49 @@
 #include <QDesktopServices>
 
 namespace {
-QString imagePlaceholderUrlForProviderId(const QString &providerId)
+QString imagePlaceholderUrlForProviderId(const QString &providerId, const bool darkMode)
 {
+    const auto colorIconPath = darkMode ? QStringLiteral(":/client/theme/white/") : QStringLiteral(":/client/theme/black/");
     if (providerId.contains(QStringLiteral("message"), Qt::CaseInsensitive)
         || providerId.contains(QStringLiteral("talk"), Qt::CaseInsensitive)) {
-        return QStringLiteral("qrc:///client/theme/black/wizard-talk.svg");
+        return colorIconPath % QStringLiteral("wizard-talk.svg");
     } else if (providerId.contains(QStringLiteral("file"), Qt::CaseInsensitive)) {
-        return QStringLiteral("qrc:///client/theme/black/edit.svg");
+        return colorIconPath % QStringLiteral("edit.svg");
     } else if (providerId.contains(QStringLiteral("deck"), Qt::CaseInsensitive)) {
-        return QStringLiteral("qrc:///client/theme/black/deck.svg");
+        return colorIconPath % QStringLiteral("deck.svg");
     } else if (providerId.contains(QStringLiteral("calendar"), Qt::CaseInsensitive)) {
-        return QStringLiteral("qrc:///client/theme/black/calendar.svg");
+        return colorIconPath % QStringLiteral("calendar.svg");
     } else if (providerId.contains(QStringLiteral("mail"), Qt::CaseInsensitive)) {
-        return QStringLiteral("qrc:///client/theme/black/email.svg");
+        return colorIconPath % QStringLiteral("email.svg");
     } else if (providerId.contains(QStringLiteral("comment"), Qt::CaseInsensitive)) {
-        return QStringLiteral("qrc:///client/theme/black/comment.svg");
+        return colorIconPath % QStringLiteral("comment.svg");
     }
 
-    return QStringLiteral("qrc:///client/theme/change.svg");
+    return colorIconPath % QStringLiteral("change.svg");
 }
 
-QString localIconPathFromIconPrefix(const QString &iconNameWithPrefix)
+QString localIconPathFromIconPrefix(const QString &iconNameWithPrefix, const bool darkMode)
 {
+    const auto colorIconPath = darkMode ? QStringLiteral(":/client/theme/white/") : QStringLiteral(":/client/theme/black/");
     if (iconNameWithPrefix.contains(QStringLiteral("message"), Qt::CaseInsensitive)
         || iconNameWithPrefix.contains(QStringLiteral("talk"), Qt::CaseInsensitive)) {
-        return QStringLiteral(":/client/theme/black/wizard-talk.svg");
+        return colorIconPath % QStringLiteral("wizard-talk.svg");
     } else if (iconNameWithPrefix.contains(QStringLiteral("folder"), Qt::CaseInsensitive)) {
-        return QStringLiteral(":/client/theme/black/folder.svg");
+        return colorIconPath % QStringLiteral("folder.svg");
     } else if (iconNameWithPrefix.contains(QStringLiteral("deck"), Qt::CaseInsensitive)) {
-        return QStringLiteral(":/client/theme/black/deck.svg");
+        return colorIconPath % QStringLiteral("deck.svg");
     } else if (iconNameWithPrefix.contains(QStringLiteral("contacts"), Qt::CaseInsensitive)) {
-        return QStringLiteral(":/client/theme/black/wizard-groupware.svg");
+        return colorIconPath % QStringLiteral("wizard-groupware.svg");
     } else if (iconNameWithPrefix.contains(QStringLiteral("calendar"), Qt::CaseInsensitive)) {
-        return QStringLiteral(":/client/theme/black/calendar.svg");
+        return colorIconPath % QStringLiteral("calendar.svg");
     } else if (iconNameWithPrefix.contains(QStringLiteral("mail"), Qt::CaseInsensitive)) {
-        return QStringLiteral(":/client/theme/black/email.svg");
+        return colorIconPath % QStringLiteral("email.svg");
     }
 
-    return QStringLiteral(":/client/theme/change.svg");
+    return colorIconPath % QStringLiteral("change.svg");
 }
 
-QString iconUrlForDefaultIconName(const QString &defaultIconName)
+QString iconUrlForDefaultIconName(const QString &defaultIconName, const bool darkMode)
 {
     const QUrl urlForIcon{defaultIconName};
 
@@ -74,31 +76,33 @@ QString iconUrlForDefaultIconName(const QString &defaultIconName)
         return defaultIconName;
     }
     
+    const auto colorIconPath = darkMode ? QStringLiteral(":/client/theme/white/") : QStringLiteral(":/client/theme/black/");
+
     if (defaultIconName.startsWith(QStringLiteral("icon-"))) {
         const auto parts = defaultIconName.split(QLatin1Char('-'));
 
         if (parts.size() > 1) {
+            const QString blackOrWhiteIconFilePath = colorIconPath + parts[1] + QStringLiteral(".svg");
+
+            if (QFile::exists(blackOrWhiteIconFilePath)) {
+                return blackOrWhiteIconFilePath;
+            }
+
             const QString iconFilePath = QStringLiteral(":/client/theme/") + parts[1] + QStringLiteral(".svg");
 
             if (QFile::exists(iconFilePath)) {
                 return iconFilePath;
             }
-
-            const QString blackIconFilePath = QStringLiteral(":/client/theme/black/") + parts[1] + QStringLiteral(".svg");
-
-            if (QFile::exists(blackIconFilePath)) {
-                return blackIconFilePath;
-            }
         }
 
-        const auto iconNameFromIconPrefix = localIconPathFromIconPrefix(defaultIconName);
+        const auto iconNameFromIconPrefix = localIconPathFromIconPrefix(defaultIconName, darkMode);
 
         if (!iconNameFromIconPrefix.isEmpty()) {
             return iconNameFromIconPrefix;
         }
     }
 
-    return QStringLiteral(":/client/theme/change.svg");
+    return colorIconPath % QStringLiteral("change.svg");
 }
 
 QString generateUrlForThumbnail(const QString &thumbnailUrl, const QUrl &serverUrl)
@@ -123,58 +127,61 @@ QString generateUrlForThumbnail(const QString &thumbnailUrl, const QUrl &serverU
     return thumbnailUrlCopy;
 }
 
-QString generateUrlForIcon(const QString &fallackIcon, const QUrl &serverUrl)
+QString generateUrlForIcon(const QString &fallbackIcon, const QUrl &serverUrl, const bool darkMode)
 {
     auto serverUrlCopy = serverUrl;
 
-    auto fallackIconCopy = fallackIcon;
+    auto fallbackIconCopy = fallbackIcon;
 
-    if (fallackIconCopy.startsWith(QLatin1Char('/')) || fallackIconCopy.startsWith(QLatin1Char('\\'))) {
+    if (fallbackIconCopy.startsWith(QLatin1Char('/')) || fallbackIconCopy.startsWith(QLatin1Char('\\'))) {
         // relative image resource URL, just needs some concatenation with current server URL
         // some icons may contain parameters after (?)
-        const QStringList fallackIconPathSplitted =
-            fallackIconCopy.contains(QLatin1Char('?')) ? fallackIconCopy.split(QLatin1Char('?')) : QStringList{fallackIconCopy};
-        Q_ASSERT(!fallackIconPathSplitted.isEmpty());
-        serverUrlCopy.setPath(fallackIconPathSplitted[0]);
-        fallackIconCopy = serverUrlCopy.toString();
-        if (fallackIconPathSplitted.size() > 1) {
-            fallackIconCopy += QLatin1Char('?') + fallackIconPathSplitted[1];
+        const QStringList fallbackIconPathSplitted =
+            fallbackIconCopy.contains(QLatin1Char('?')) ? fallbackIconCopy.split(QLatin1Char('?')) : QStringList{fallbackIconCopy};
+        Q_ASSERT(!fallbackIconPathSplitted.isEmpty());
+        serverUrlCopy.setPath(fallbackIconPathSplitted[0]);
+        fallbackIconCopy = serverUrlCopy.toString();
+        if (fallbackIconPathSplitted.size() > 1) {
+            fallbackIconCopy += QLatin1Char('?') + fallbackIconPathSplitted[1];
         }
-    } else if (!fallackIconCopy.isEmpty()) {
+    } else if (!fallbackIconCopy.isEmpty()) {
         // could be one of names for standard icons (e.g. icon-mail)
-        const auto defaultIconUrl = iconUrlForDefaultIconName(fallackIconCopy);
+        const auto defaultIconUrl = iconUrlForDefaultIconName(fallbackIconCopy, darkMode);
         if (!defaultIconUrl.isEmpty()) {
-            fallackIconCopy = defaultIconUrl;
+            fallbackIconCopy = defaultIconUrl;
         }
     }
 
-    return fallackIconCopy;
+    return fallbackIconCopy;
 }
 
-QString iconsFromThumbnailAndFallbackIcon(const QString &thumbnailUrl, const QString &fallackIcon, const QUrl &serverUrl)
+// Return image URL and whether it is a thumbnail or not
+std::pair<QString, bool> iconsFromThumbnailAndFallbackIcon(const QString &thumbnailUrl, const QString &fallbackIcon, const QUrl &serverUrl, const bool darkMode)
 {
-    if (thumbnailUrl.isEmpty() && fallackIcon.isEmpty()) {
+    if (thumbnailUrl.isEmpty() && fallbackIcon.isEmpty()) {
         return {};
     }
 
     if (serverUrl.isEmpty()) {
-        const QStringList listImages = {thumbnailUrl, fallackIcon};
-        return listImages.join(QLatin1Char(';'));
+        const QStringList listImages = {thumbnailUrl, fallbackIcon};
+        return {listImages.join(QLatin1Char(';')), false};
     }
 
     const auto urlForThumbnail = generateUrlForThumbnail(thumbnailUrl, serverUrl);
-    const auto urlForFallackIcon = generateUrlForIcon(fallackIcon, serverUrl);
+    const auto urlForFallbackIcon = generateUrlForIcon(fallbackIcon, serverUrl, darkMode);
 
-    if (urlForThumbnail.isEmpty() && !urlForFallackIcon.isEmpty()) {
-        return urlForFallackIcon;
+    qDebug() << "SEARCH" << urlForThumbnail << urlForFallbackIcon;
+
+    if (urlForThumbnail.isEmpty() && !urlForFallbackIcon.isEmpty()) {
+        return {urlForFallbackIcon, false};
     }
 
-    if (!urlForThumbnail.isEmpty() && urlForFallackIcon.isEmpty()) {
-        return urlForThumbnail;
+    if (!urlForThumbnail.isEmpty() && urlForFallbackIcon.isEmpty()) {
+        return {urlForThumbnail, true};
     }
 
-    const QStringList listImages{urlForThumbnail, urlForFallackIcon};
-    return listImages.join(QLatin1Char(';'));
+    const QStringList listImages{urlForThumbnail, urlForFallbackIcon};
+    return {listImages.join(QLatin1Char(';')), true};
 }
 
 constexpr int searchTermEditingFinishedSearchStartDelay = 800;
@@ -200,10 +207,18 @@ QVariant UnifiedSearchResultsListModel::data(const QModelIndex &index, int role)
         return _results.at(index.row())._providerName;
     case ProviderIdRole: 
         return _results.at(index.row())._providerId;
-    case ImagePlaceholderRole:
-        return imagePlaceholderUrlForProviderId(_results.at(index.row())._providerId);
-    case IconsRole:
-        return _results.at(index.row())._icons;
+    case DarkImagePlaceholderRole:
+        return imagePlaceholderUrlForProviderId(_results.at(index.row())._providerId, true);
+    case LightImagePlaceholderRole:
+        return imagePlaceholderUrlForProviderId(_results.at(index.row())._providerId, false);
+    case DarkIconsRole:
+        return _results.at(index.row())._darkIcons;
+    case LightIconsRole:
+        return _results.at(index.row())._lightIcons;
+    case DarkIconsIsThumbnailRole:
+        return _results.at(index.row())._darkIconsIsThumbnail;
+    case LightIconsIsThumbnailRole:
+        return _results.at(index.row())._lightIconsIsThumbnail;
     case TitleRole:
         return _results.at(index.row())._title;
     case SublineRole:
@@ -235,8 +250,12 @@ QHash<int, QByteArray> UnifiedSearchResultsListModel::roleNames() const
     auto roles = QAbstractListModel::roleNames();
     roles[ProviderNameRole] = "providerName";
     roles[ProviderIdRole] = "providerId";
-    roles[IconsRole] = "icons";
-    roles[ImagePlaceholderRole] = "imagePlaceholder";
+    roles[DarkIconsRole] = "darkIcons";
+    roles[LightIconsRole] = "lightIcons";
+    roles[DarkIconsIsThumbnailRole] = "darkIconsIsThumbnail";
+    roles[LightIconsIsThumbnailRole] = "lightIconsIsThumbnail";
+    roles[DarkImagePlaceholderRole] = "darkImagePlaceholder";
+    roles[LightImagePlaceholderRole] = "lightImagePlaceholder";
     roles[TitleRole] = "resultTitle";
     roles[SublineRole] = "subline";
     roles[ResourceUrlRole] = "resourceUrlRole";
@@ -259,6 +278,11 @@ QString UnifiedSearchResultsListModel::errorString() const
 QString UnifiedSearchResultsListModel::currentFetchMoreInProgressProviderId() const
 {
     return _currentFetchMoreInProgressProviderId;
+}
+
+bool UnifiedSearchResultsListModel::waitingForSearchTermEditEnd() const
+{
+    return _waitingForSearchTermEditEnd;
 }
 
 void UnifiedSearchResultsListModel::setSearchTerm(const QString &term)
@@ -284,6 +308,8 @@ void UnifiedSearchResultsListModel::setSearchTerm(const QString &term)
 
     if (_unifiedSearchTextEditingFinishedTimer.isActive()) {
         _unifiedSearchTextEditingFinishedTimer.stop();
+        _waitingForSearchTermEditEnd = false;
+        emit waitingForSearchTermEditEndChanged();
     }
 
     if (!_searchTerm.isEmpty()) {
@@ -291,6 +317,8 @@ void UnifiedSearchResultsListModel::setSearchTerm(const QString &term)
         connect(&_unifiedSearchTextEditingFinishedTimer, &QTimer::timeout, this,
             &UnifiedSearchResultsListModel::slotSearchTermEditingFinished);
         _unifiedSearchTextEditingFinishedTimer.start();
+        _waitingForSearchTermEditEnd = true;
+        emit waitingForSearchTermEditEndChanged();
     }
 
     if (!_results.isEmpty()) {
@@ -348,11 +376,14 @@ void UnifiedSearchResultsListModel::fetchMoreTriggerClicked(const QString &provi
 
 void UnifiedSearchResultsListModel::slotSearchTermEditingFinished()
 {
+    _waitingForSearchTermEditEnd = false;
+    emit waitingForSearchTermEditEndChanged();
+
     disconnect(&_unifiedSearchTextEditingFinishedTimer, &QTimer::timeout, this,
         &UnifiedSearchResultsListModel::slotSearchTermEditingFinished);
 
     if (!_accountState || !_accountState->account()) {
-        qCCritical(lcUnifiedSearch) << QString("Account state is invalid. Could not start search!");
+        qCCritical(lcUnifiedSearch) << QStringLiteral("Account state is invalid. Could not start search!");
         return;
     }
 
@@ -370,14 +401,14 @@ void UnifiedSearchResultsListModel::slotFetchProvidersFinished(const QJsonDocume
     const auto job = qobject_cast<JsonApiJob *>(sender());
 
     if (!job) {
-        qCCritical(lcUnifiedSearch) << QString("Failed to fetch providers.").arg(_searchTerm);
+        qCCritical(lcUnifiedSearch) << QStringLiteral("Failed to fetch providers.").arg(_searchTerm);
         _errorString += tr("Failed to fetch providers.") + QLatin1Char('\n');
         emit errorStringChanged();
         return;
     }
     
     if (statusCode != 200) {
-        qCCritical(lcUnifiedSearch) << QString("%1: Failed to fetch search providers for '%2'. Error: %3")
+        qCCritical(lcUnifiedSearch) << QStringLiteral("%1: Failed to fetch search providers for '%2'. Error: %3")
                                            .arg(statusCode)
                                            .arg(_searchTerm)
                                            .arg(job->errorString());
@@ -415,7 +446,7 @@ void UnifiedSearchResultsListModel::slotSearchForProviderFinished(const QJsonDoc
     const auto job = qobject_cast<JsonApiJob *>(sender());
 
     if (!job) {
-        qCCritical(lcUnifiedSearch) << QString("Search has failed for '%2'.").arg(_searchTerm);
+        qCCritical(lcUnifiedSearch) << QStringLiteral("Search has failed for '%2'.").arg(_searchTerm);
         _errorString += tr("Search has failed for '%2'.").arg(_searchTerm) + QLatin1Char('\n');
         emit errorStringChanged();
         return;
@@ -440,7 +471,7 @@ void UnifiedSearchResultsListModel::slotSearchForProviderFinished(const QJsonDoc
     }
 
     if (statusCode != 200) {
-        qCCritical(lcUnifiedSearch) << QString("%1: Search has failed for '%2'. Error: %3")
+        qCCritical(lcUnifiedSearch) << QStringLiteral("%1: Search has failed for '%2'. Error: %3")
                                            .arg(statusCode)
                                            .arg(_searchTerm)
                                            .arg(job->errorString());
@@ -472,7 +503,7 @@ void UnifiedSearchResultsListModel::startSearch()
         endResetModel();
     }
 
-    for (const auto &provider : _providers) {
+    for (const auto &provider : std::as_const(_providers)) {
         startSearchForProvider(provider._id);
     }
 }
@@ -547,15 +578,6 @@ void UnifiedSearchResultsListModel::parseResultsForProvider(const QJsonObject &d
 
     QVector<UnifiedSearchResult> newEntries;
 
-    const auto makeResourceUrl = [](const QString &resourceUrl, const QUrl &accountUrl) {
-        QUrl finalResurceUrl(resourceUrl);
-        if (finalResurceUrl.scheme().isEmpty() && accountUrl.scheme().isEmpty()) {
-            finalResurceUrl = accountUrl;
-            finalResurceUrl.setPath(resourceUrl);
-        }
-        return finalResurceUrl;
-    };
-
     for (const auto &entry : entries) {
         const auto entryMap = entry.toMap();
         if (entryMap.isEmpty()) {
@@ -569,12 +591,18 @@ void UnifiedSearchResultsListModel::parseResultsForProvider(const QJsonObject &d
         result._title = entryMap.value(QStringLiteral("title")).toString();
         result._subline = entryMap.value(QStringLiteral("subline")).toString();
 
-        const auto resourceUrl = entryMap.value(QStringLiteral("resourceUrl")).toString();
+        const auto resourceUrl = entryMap.value(QStringLiteral("resourceUrl")).toUrl();
         const auto accountUrl = (_accountState && _accountState->account()) ? _accountState->account()->url() : QUrl();
 
-        result._resourceUrl = makeResourceUrl(resourceUrl, accountUrl);
-        result._icons = iconsFromThumbnailAndFallbackIcon(entryMap.value(QStringLiteral("thumbnailUrl")).toString(),
-            entryMap.value(QStringLiteral("icon")).toString(), accountUrl);
+        result._resourceUrl = openableResourceUrl(resourceUrl, accountUrl);
+        const auto darkIconsData = iconsFromThumbnailAndFallbackIcon(entryMap.value(QStringLiteral("thumbnailUrl")).toString(),
+                                                                     entryMap.value(QStringLiteral("icon")).toString(), accountUrl, true);
+        const auto lightIconsData = iconsFromThumbnailAndFallbackIcon(entryMap.value(QStringLiteral("thumbnailUrl")).toString(),
+                                                                      entryMap.value(QStringLiteral("icon")).toString(), accountUrl, false);
+        result._darkIcons = darkIconsData.first;
+        result._lightIcons = lightIconsData.first;
+        result._darkIconsIsThumbnail = darkIconsData.second;
+        result._lightIconsIsThumbnail = lightIconsData.second;
 
         newEntries.push_back(result);
     }
@@ -584,6 +612,17 @@ void UnifiedSearchResultsListModel::parseResultsForProvider(const QJsonObject &d
     } else {
         appendResults(newEntries, provider);
     }
+}
+
+QUrl UnifiedSearchResultsListModel::openableResourceUrl(const QUrl &resourceUrl, const QUrl &accountUrl)
+{
+    if (!resourceUrl.isRelative()) {
+        return resourceUrl;
+    }
+
+    QUrl finalResourceUrl(accountUrl);
+    finalResourceUrl.setPath(resourceUrl.toString());
+    return finalResourceUrl;
 }
 
 void UnifiedSearchResultsListModel::appendResults(QVector<UnifiedSearchResult> results, const UnifiedSearchProvider &provider)
@@ -686,7 +725,7 @@ void UnifiedSearchResultsListModel::removeFetchMoreTrigger(const QString &provid
 
 void UnifiedSearchResultsListModel::disconnectAndClearSearchJobs()
 {
-    for (const auto &connection : _searchJobConnections) {
+    for (const auto &connection : std::as_const(_searchJobConnections)) {
         if (connection) {
             QObject::disconnect(connection);
         }
