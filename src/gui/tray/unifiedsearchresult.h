@@ -42,7 +42,10 @@ struct UnifiedSearchResult
     bool _isRounded = false;
     qint32 _order = std::numeric_limits<qint32>::max();
     QUrl _resourceUrl;
-    QString _icons;
+    QString _darkIcons;
+    QString _lightIcons;
+    bool _darkIconsIsThumbnail = false;
+    bool _lightIconsIsThumbnail = false;
     Type _type = Type::Default;
 };
 }

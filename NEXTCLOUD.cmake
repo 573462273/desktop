@@ -1,11 +1,28 @@
-set( APPLICATION_NAME       "Nextcloud" )
-set( APPLICATION_SHORTNAME  "Nextcloud" )
-set( APPLICATION_EXECUTABLE "nextcloud" )
+# keep the application name and short name the same or different for dev and prod build
+# or some migration logic will behave differently for each build
+if(NEXTCLOUD_DEV)
+    set( APPLICATION_NAME       "NextcloudDev" )
+    set( APPLICATION_SHORTNAME  "NextcloudDev" )
+    set( APPLICATION_EXECUTABLE "nextclouddev" )
+    set( APPLICATION_ICON_NAME  "Nextcloud" )
+else()
+    set( APPLICATION_NAME       "Nextcloud" )
+    set( APPLICATION_SHORTNAME  "Nextcloud" )
+    set( APPLICATION_EXECUTABLE "nextcloud" )
+    set( APPLICATION_ICON_NAME  "${APPLICATION_SHORTNAME}" )
+endif()
+
+set( APPLICATION_CONFIG_NAME "${APPLICATION_EXECUTABLE}" )
 set( APPLICATION_DOMAIN     "nextcloud.com" )
 set( APPLICATION_VENDOR     "Nextcloud GmbH" )
 set( APPLICATION_UPDATE_URL "https://updates.nextcloud.org/client/" CACHE STRING "URL for updater" )
 set( APPLICATION_HELP_URL   "" CACHE STRING "URL for the help menu" )
-set( APPLICATION_ICON_NAME  "Nextcloud" )
+
+if(APPLE AND APPLICATION_NAME STREQUAL "Nextcloud" AND EXISTS "${CMAKE_SOURCE_DIR}/theme/colored/Nextcloud-macOS-icon.svg")
+    set( APPLICATION_ICON_NAME "Nextcloud-macOS" )
+    message("Using macOS-specific application icon: ${APPLICATION_ICON_NAME}")
+endif()
+
 set( APPLICATION_ICON_SET   "SVG" )
 set( APPLICATION_SERVER_URL "" CACHE STRING "URL for the server to use. If entered, the UI field will be pre-filled with it" )
 set( APPLICATION_SERVER_URL_ENFORCE ON ) # If set and APPLICATION_SERVER_URL is defined, the server can only connect to the pre-defined URL
@@ -36,6 +53,8 @@ option( WITH_PROVIDERS "Build with providers list" ON )
 
 option( ENFORCE_VIRTUAL_FILES_SYNC_FOLDER "Enforce use of virtual files sync folder when available" OFF )
 
+option(ENFORCE_SINGLE_ACCOUNT "Enforce use of a single account in desktop client" OFF)
+
 option( DO_NOT_USE_PROXY "Do not use system wide proxy, instead always do a direct connection to server" OFF )
 
 ## Theming options
@@ -65,4 +84,8 @@ if(WIN32)
     # Windows build options
     option( BUILD_WIN_MSI "Build MSI scripts and helper DLL" OFF )
     option( BUILD_WIN_TOOLS "Build Win32 migration tools" OFF )
+endif()
+
+if (APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_GREATER_EQUAL 11.0)
+    option( BUILD_FILE_PROVIDER_MODULE "Build the macOS virtual files File Provider module" OFF )
 endif()

@@ -1,6 +1,7 @@
-import QtQml 2.15
-import QtQuick 2.15
-import QtQuick.Controls 2.3
+import QtQml
+import QtQuick
+import QtQuick.Controls
+import Style
 
 AutoSizingMenu {
     id: moreActionsButtonContextMenu

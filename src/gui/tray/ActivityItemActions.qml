@@ -1,103 +1,49 @@
-import QtQml 2.15
-import QtQuick 2.15
-import QtQuick.Controls 2.3
-import QtQuick.Layouts 1.2
-import Style 1.0
+import QtQml
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Style
+import com.nextcloud.desktopclient
 
-RowLayout {
+Repeater {
     id: root
-
-    spacing: 20
 
     property string objectType: ""
     property variant linksForActionButtons: []
     property variant linksContextMenu: []
     property bool displayActions: false
 
-    property color moreActionsButtonColor: "transparent"
+    property color moreActionsButtonColor: palette.base
 
     property int maxActionButtons: 0
 
     property Flickable flickable
 
+    property bool talkReplyButtonVisible: true
+
     signal triggerAction(int actionIndex)
+    signal showReplyField()
 
-    Repeater {
-        id: actionsRepeater
-        // a max of maxActionButtons will get dispayed as separate buttons
-        model: root.linksForActionButtons
+    model: root.linksForActionButtons
 
-        ActivityActionButton {
-            id: activityActionButton
+    Button {
+        id: activityActionButton
 
-            readonly property bool primary: model.index === 0 && model.modelData.verb !== "DELETE"
+        property string verb: model.modelData.verb
+        property bool isTalkReplyButton: verb === "REPLY"
 
-            Layout.minimumWidth: primary ? Style.activityItemActionPrimaryButtonMinWidth : Style.activityItemActionSecondaryButtonMinWidth
-            Layout.preferredHeight: primary ? parent.height : parent.height * 0.3
-            Layout.preferredWidth: primary ? -1 : parent.height
+        Layout.alignment: Qt.AlignTop | Qt.AlignRight
 
-            text: model.modelData.label
-            toolTipText: model.modelData.label
+        hoverEnabled: true
+        padding: Style.smallSpacing
+        display: Button.TextOnly
 
-            imageSource: model.modelData.imageSource
-            imageSourceHover: model.modelData.imageSourceHovered
+        text: model.modelData.label
 
-            textColor: imageSource !== "" ? Style.ncBlue : Style.unifiedSearchResulSublineColor
-            textColorHovered: imageSource !== "" ? Style.lightHover : Style.unifiedSearchResulTitleColor
+        icon.source: model.modelData.imageSource ? model.modelData.imageSource + Style.adjustedCurrentUserHeaderColor : ""
 
-            bold: primary
+        onClicked: isTalkReplyButton ? root.showReplyField() : root.triggerAction(model.index)
 
-            onClicked: root.triggerAction(model.index)
-        }
-    }
-
-    Loader {
-        // actions that do not fit maxActionButtons limit, must be put into a context menu
-        id: moreActionsButtonContainer
-
-        Layout.preferredWidth: parent.height
-        Layout.topMargin: Style.roundedButtonBackgroundVerticalMargins
-        Layout.bottomMargin: Style.roundedButtonBackgroundVerticalMargins
-        Layout.fillHeight: true
-
-        active: root.displayActions && (root.linksContextMenu.length > 0)
-
-        sourceComponent: Button {
-            id: moreActionsButton
-
-            icon.source: "qrc:///client/theme/more.svg"
-
-            background: Rectangle {
-                color: parent.hovered ? "white" : root.moreActionsButtonColor
-                radius: width / 2
-            }
-
-            ToolTip.visible: hovered
-            ToolTip.delay: Qt.styleHints.mousePressAndHoldInterval
-            ToolTip.text: qsTr("Show more actions")
-
-            Accessible.name: qsTr("Show more actions")
-
-            onClicked:  moreActionsButtonContextMenu.popup(moreActionsButton.x, moreActionsButton.y);
-
-            Connections {
-                target: root.flickable
-
-                function onMovementStarted() {
-                    moreActionsButtonContextMenu.close();
-                }
-            }
-
-            ActivityItemContextMenu {
-                id: moreActionsButtonContextMenu
-
-                maxActionButtons: root.maxActionButtons
-                linksContextMenu: root.linksContextMenu
-
-                onMenuEntryTriggered: function(entryIndex) {
-                    root.triggerAction(entryIndex)
-                }
-            }
-        }
+        visible: verb !== "REPLY" || (verb === "REPLY" && root.talkReplyButtonVisible)
     }
 }
